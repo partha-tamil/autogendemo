@@ -244,6 +244,44 @@
         const responseDisplay = document.getElementById('response-display');
         const loadingSpinner = document.getElementById('loadingSpinner');
 
+        // Example function to call the Python backend
+        async function callPythonBackend(textToReverse) {
+            const responseDisplay = document.getElementById('response-display');
+            const loadingSpinner = document.getElementById('loadingSpinner');
+            const generateBtn = document.getElementById('generateBtn');
+
+            loadingSpinner.classList.remove('d-none');
+            generateBtn.disabled = true;
+            responseDisplay.textContent = 'Calling Python backend...';
+
+            try {
+                const response = await fetch('http://127.0.0.1:5000/reverse_string', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ text: textToReverse }),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`Backend error: ${response.status} - ${errorData.error || 'Unknown error'}`);
+                }
+
+                const result = await response.json();
+                responseDisplay.textContent = `Original: ${result.original}\nReversed: ${result.reversed}`;
+
+            } catch (error) {
+                responseDisplay.textContent = `Error calling Python: ${error.message}`;
+                showMessageBox('Backend Call Error', `Failed to connect to Python backend: ${error.message}. Make sure the Python server is running.`);
+                console.error('Error calling Python backend:', error);
+            } finally {
+                loadingSpinner.classList.add('d-none');
+                generateBtn.disabled = false;
+            }
+        }
+
+
         /**
          * Handles the generation of AI response when the button is clicked.
          */
@@ -261,6 +299,11 @@
             responseDisplay.textContent = 'Generating response...';
 
             try {
+
+                // Call the Python backend instead of or in addition to the Gemini API
+                //await callPythonBackend(prompt); // <--- New call here
+
+
                 // Prepare the payload for the Gemini API
                 let chatHistory = [];
                 chatHistory.push({ role: "user", parts: [{ text: prompt }] });
