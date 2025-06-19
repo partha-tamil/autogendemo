@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Prompt Generator</title>
+    <!-- Inter Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" xintegrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8f9fa;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 15px; /* Rounded corners for the container */
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            max-width: 800px;
+            width: 90%;
+        }
+        h1 {
+            color: #343a40;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        textarea {
+            border-radius: 10px; /* Rounded corners for textarea */
+            resize: vertical;
+            min-height: 150px;
+        }
+        .btn-primary {
+            background-color: #007bff;
+            border-color: #007bff;
+            border-radius: 10px; /* Rounded corners for button */
+            padding: 10px 20px;
+            transition: background-color 0.3s ease;
+        }
+        .btn-primary:hover {
+            background-color: #0056b3;
+            border-color: #0056b3;
+        }
+        #response-display {
+            background-color: #e9ecef;
+            padding: 20px;
+            border-radius: 10px; /* Rounded corners for response display */
+            margin-top: 20px;
+            min-height: 100px;
+            white-space: pre-wrap; /* Preserve whitespace and line breaks */
+            word-wrap: break-word; /* Break long words */
+        }
+        .spinner-border {
+            width: 1.5rem;
+            height: 1.5rem;
+            vertical-align: middle;
+            margin-left: 10px;
+        }
+        /* Message box styling */
+        .message-box-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .message-box-content {
+            background: #fff;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+        }
+        .message-box-content h4 {
+            margin-top: 0;
+            color: #333;
+        }
+        .message-box-content p {
+            margin-bottom: 20px;
+            color: #666;
+        }
+        .message-box-content button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .message-box-content button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container my-5">
+        <h1>AI Prompt Generator</h1>
+
+        <div class="mb-3">
+            <label for="promptInput" class="form-label">Enter your prompt:</label>
+            <textarea class="form-control" id="promptInput" rows="5" placeholder="e.g., Write a short story about a brave knight and a dragon."></textarea>
+        </div>
+
+        <div class="d-grid gap-2">
+            <button class="btn btn-primary" id="generateBtn" type="button">
+                Generate Response
+                <span id="loadingSpinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+            </button>
+        </div>
+
+        <div class="mt-4">
+            <label for="response-display" class="form-label">AI Response:</label>
+            <div id="response-display" class="border p-3">
+                Your AI-generated response will appear here.
+            </div>
+        </div>
+    </div>
+
+    <!-- Message Box Template -->
+    <div id="messageBox" class="message-box-overlay d-none">
+        <div class="message-box-content">
+            <h4 id="messageBoxTitle"></h4>
+            <p id="messageBoxMessage"></p>
+            <button id="messageBoxCloseBtn">OK</button>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS (bundle includes Popper) -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" xintegrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables for Firebase instances
+        let app;
+        let db;
+        let auth;
+        let userId;
+
+        // Function to display a custom message box
+        function showMessageBox(title, message) {
+            const messageBox = document.getElementById('messageBox');
+            document.getElementById('messageBoxTitle').textContent = title;
+            document.getElementById('messageBoxMessage').textContent = message;
+            messageBox.classList.remove('d-none');
+            document.getElementById('messageBoxCloseBtn').onclick = () => {
+                messageBox.classList.add('d-none');
+            };
+        }
+
+        /**
+         * Initializes Firebase and authenticates the user.
+         * Uses __initial_auth_token if available, otherwise signs in anonymously.
+         */
+        async function initializeFirebase() {
+            try {
+                // Retrieve global Firebase config and app ID
+                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+                if (!firebaseConfig) {
+                    showMessageBox('Configuration Error', 'Firebase configuration is missing. Cannot initialize Firebase.');
+                    console.error('Firebase configuration (__firebase_config) is missing.');
+                    return;
+                }
+
+                // Initialize Firebase app
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // Authenticate user
+                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                userId = auth.currentUser?.uid || crypto.randomUUID();
+                console.log('Firebase initialized and user authenticated. User ID:', userId);
+
+            } catch (error) {
+                showMessageBox('Firebase Error', `Failed to initialize Firebase or authenticate: ${error.message}`);
+                console.error('Firebase initialization or authentication error:', error);
+            }
+        }
+
+        // Initialize Firebase on window load
+        window.onload = initializeFirebase;
+
+        // Get DOM elements
+        const promptInput = document.getElementById('promptInput');
+        const generateBtn = document.getElementById('generateBtn');
+        const responseDisplay = document.getElementById('response-display');
+        const loadingSpinner = document.getElementById('loadingSpinner');
+
+        /**
+         * Handles the generation of AI response when the button is clicked.
+         */
+        generateBtn.addEventListener('click', async () => {
+            const prompt = promptInput.value.trim();
+
+            if (!prompt) {
+                showMessageBox('Input Required', 'Please enter a prompt before generating a response.');
+                return;
+            }
+
+            // Show loading spinner and disable button
+            loadingSpinner.classList.remove('d-none');
+            generateBtn.disabled = true;
+            responseDisplay.textContent = 'Generating response...';
+
+            try {
+                // Prepare the payload for the Gemini API
+                let chatHistory = [];
+                chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+                const payload = { contents: chatHistory };
+
+                // The API key will be automatically provided by the Canvas environment if left empty
+                const apiKey = "";
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+                // Make the API call
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                // Check if the response was successful
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(`API error: ${response.status} - ${errorData.error.message || 'Unknown error'}`);
+                }
+
+                const result = await response.json();
+
+                // Extract and display the AI-generated text
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                    const text = result.candidates[0].content.parts[0].text;
+                    responseDisplay.textContent = text;
+                } else {
+                    responseDisplay.textContent = 'No response generated. Please try again.';
+                    showMessageBox('Generation Failed', 'The AI did not return a valid response structure. Please try again.');
+                }
+            } catch (error) {
+                responseDisplay.textContent = `Error: ${error.message}`;
+                showMessageBox('Generation Error', `An error occurred while generating the response: ${error.message}`);
+                console.error('API call failed:', error);
+            } finally {
+                // Hide loading spinner and enable button
+                loadingSpinner.classList.add('d-none');
+                generateBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
