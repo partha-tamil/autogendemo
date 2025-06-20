@@ -301,7 +301,7 @@
             try {
 
                 // Call the Python backend instead of or in addition to the Gemini API
-                //await callPythonBackend(prompt); // <--- New call here
+                await callPythonBackend(prompt); // <--- New call here
 
 
                 // Prepare the payload for the Gemini API
@@ -310,34 +310,34 @@
                 const payload = { contents: chatHistory };
 
                 // The API key will be automatically provided by the Canvas environment if left empty
-                const apiKey = "AIzaSyBoJ8OoZAw3eRLODHAVKYvrBG_julewJ8s";
-                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                // const apiKey = "AIzaSyBoJ8OoZAw3eRLODHAVKYvrBG_julewJ8s";
+                // const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
-                // Make the API call
-                const response = await fetch(apiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
+                // // Make the API call
+                // const response = await fetch(apiUrl, {
+                //     method: 'POST',
+                //     headers: { 'Content-Type': 'application/json' },
+                //     body: JSON.stringify(payload)
+                // });
 
-                // Check if the response was successful
-                if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(`API error: ${response.status} - ${errorData.error.message || 'Unknown error'}`);
-                }
+                // // Check if the response was successful
+                // if (!response.ok) {
+                //     const errorData = await response.json();
+                //     throw new Error(`API error: ${response.status} - ${errorData.error.message || 'Unknown error'}`);
+                // }
 
-                const result = await response.json();
+                // const result = await response.json();
 
-                // Extract and display the AI-generated text
-                if (result.candidates && result.candidates.length > 0 &&
-                    result.candidates[0].content && result.candidates[0].content.parts &&
-                    result.candidates[0].content.parts.length > 0) {
-                    const text = result.candidates[0].content.parts[0].text;
-                    responseDisplay.textContent = text;
-                } else {
-                    responseDisplay.textContent = 'No response generated. Please try again.';
-                    showMessageBox('Generation Failed', 'The AI did not return a valid response structure. Please try again.');
-                }
+                // // Extract and display the AI-generated text
+                // if (result.candidates && result.candidates.length > 0 &&
+                //     result.candidates[0].content && result.candidates[0].content.parts &&
+                //     result.candidates[0].content.parts.length > 0) {
+                //     const text = result.candidates[0].content.parts[0].text;
+                //     responseDisplay.textContent = text;
+                // } else {
+                //     responseDisplay.textContent = 'No response generated. Please try again.';
+                //     showMessageBox('Generation Failed', 'The AI did not return a valid response structure. Please try again.');
+                // }
             } catch (error) {
                 responseDisplay.textContent = `Error: ${error.message}`;
                 showMessageBox('Generation Error', `An error occurred while generating the response: ${error.message}`);
