@@ -156,7 +156,11 @@ def run_workflow():
     chat_result = user_proxy.initiate_chat(
     orchestrator, message= agent_input, 
     summary_method="reflection_with_llm",
-    summary_prompt = "Please provide a detailed summary of the problem discussed, the solution proposed, and the final outcome of the multi-agent collaboration and decisions. Start with 'Overall, the team collaborated to..."
+    summary_prompt = (
+    "Please provide a detailed summary of the conversation. "
+    "Include the main question, key points discussed, reasoning steps, and final conclusions. "
+    "Use bullet points or paragraphs. The summary should be at least 10 lines long."
+        )
     )
     
     return jsonify({'message':chat_result.summary})
