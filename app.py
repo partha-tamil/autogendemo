@@ -7,10 +7,46 @@ from flask_cors import CORS # Needed to allow requests from your web app (differ
 from autogenstudio import WorkflowManager
 from azure.search.documents import SearchClient
 from azure.core.credentials import AzureKeyCredential
+from openai import AzureOpenAI
 
 app = Flask(__name__)
 CORS(app) # Enable Cross-Origin Resource Sharing
 
+
+# Azure OpenAI Configuration
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "https://autogenpoc.openai.azure.com/")
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "")
+AZURE_OPENAI_DEPLOYMENT_NAME = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4") # e.g., "gpt-4" or "gpt-35-turbo"
+AZURE_OPENAI_API_VERSION = "2024-02-01" # Or your specific API version
+
+# Azure AI Search Configuration
+AZURE_SEARCH_ENDPOINT = os.getenv("AZURE_SEARCH_ENDPOINT", "https://autogenpoc-search.search.windows.net")
+AZURE_SEARCH_API_KEY = os.getenv("AZURE_SEARCH_API_KEY", "")
+AZURE_SEARCH_INDEX_NAME = os.getenv("AZURE_SEARCH_INDEX_NAME", "")
+
+
+# --- Initialize Clients ---
+try:
+    # Initialize Azure OpenAI Client
+    openai_client = AzureOpenAI(
+        azure_endpoint=AZURE_OPENAI_ENDPOINT,
+        api_key=AZURE_OPENAI_API_KEY,
+        api_version=AZURE_OPENAI_API_VERSION
+    )
+    print("Azure OpenAI client initialized successfully.")
+
+    # Initialize Azure AI Search Client
+    search_client = SearchClient(
+        endpoint=AZURE_SEARCH_ENDPOINT,
+        index_name=AZURE_SEARCH_INDEX_NAME,
+        credential=AzureKeyCredential(AZURE_SEARCH_API_KEY)
+    )
+    print("Azure AI Search client initialized successfully.")
+
+except Exception as e:
+    print(f"Error initializing clients: {e}")
+    print("Please ensure your environment variables/configurations are correct.")
+    exit()
 
 #LLM Configuration
 llm_config = {
@@ -85,12 +121,58 @@ groupchat1 = autogen.GroupChat(agents=[user_proxy, prompt_compressor],
                                messages=[])
 manager1 = autogen.GroupChatManager(groupchat=groupchat1, llm_config=llm_config)
 
+def retrieve_documents_from_search(query_text: str, top_n: int = 3):
+    """
+    Retrieves relevant documents from Azure AI Search based on the query text.
+    """
+    print(f"\nSearching Azure AI Search for: '{query_text}'...")
+    try:
+        # Perform a simple search. For more advanced scenarios, consider semantic or vector search.
+        search_results = search_client.search(
+            search_text=query_text,
+            top=top_n,
+            include_total_count=True,
+            query_type="simple" # Can be "semantic", "vector", "full", etc. depending on your index
+            # For semantic search: query_type="semantic", semantic_configuration_name="my-semantic-config"
+            # For vector search: vector_queries=[VectorQuery(vector=embedding_of_query, k_nearest_neighbors=5, fields="contentVector")]
+        )
+
+        documents = []
+        for result in search_results:
+            # --- DEBUGGING STEP: Print the entire result object ---
+            print(f"  --- Full search result document: {result}")
+            # --- END DEBUGGING STEP ---
+
+            # Assuming your documents have a 'content' field and a 'title' or 'id' field
+            # Adjust field names based on your Azure AI Search index schema
+            # IMPORTANT: Check the printed 'result' object above to find the correct field for your document's main content.
+            # It might be 'text', 'main_content', 'description', etc., instead of 'content'.
+            doc_content = result.get('chunk', 'No content found') # <--- **UPDATE THIS FIELD NAME IF NECESSARY**
+            doc_title = result.get('title', result.get('id', 'Untitled Document')) # <--- UPDATE THIS FIELD NAME IF NECESSARY
+
+            documents.append({
+                "title": doc_title,
+                "content": doc_content,
+                "score": result['@search.score']
+            })
+            print(f"  - Found document: '{doc_title}' (Score: {result['@search.score']:.2f})")
+            if doc_content == 'No content found':
+                print(f"    WARNING: Content for '{doc_title}' was not found. Check your index schema for the correct content field name.")
+        return documents
+
+    except Exception as e:
+        print(f"Error during Azure AI Search retrieval: {e}")
+        return []
+
+
+
+
 
 #fetch data from knowledge store
 def fetch_data_ai_search(searchkey):
     # Replace with your actual values
     endpoint = "https://autogenpoc-search.search.windows.net"
-    index_name = "rag-1750323268963"
+    index_name = "rag-1750581699787"
     api_key = ""
 
     # Create a SearchClient
@@ -137,7 +219,8 @@ def reverse_string():
 
 @app.route('/run_workflow',methods=['POST'])
 def run_workflow():
-     
+
+ 
     workflow_path = os.path.join(os.path.dirname(__file__), "workflow.json")
     workflow_manager = WorkflowManager(workflow=workflow_path)
     data = request.get_json()
@@ -146,21 +229,43 @@ def run_workflow():
 
     input_text = data['text']
     
-    responsefromaisearch = fetch_data_ai_search(input_text)
-    print(responsefromaisearch)
+    retrieved_docs = retrieve_documents_from_search(input_text)
+    #fetch_data_ai_search(input_text)
 
-    agent_input = f"""Based on the following documents:\n{responsefromaisearch}\n\nAnswer the question: {input_text}"""
+    system_message = (
+        "You are a helpful AI assistant that answers questions based ONLY on the provided context. "
+        "If the answer cannot be found in the context, politely state that you don't have enough information. "
+        "Cite the document titles you used to answer the question, if applicable."
+    )
+   
+
+    #agent_input = f"""Based on the following documents:\n{responsefromaisearch}\n\nAnswer the question: {input_text}"""
     
+# Format the retrieved documents as context for the LLM
+    context_text = ""
+    if retrieved_docs:
+        context_text = "Context Documents:\n"
+        for i, doc in enumerate(retrieved_docs):
+            context_text += f"Document {i+1} (Title: {doc['title']}):\n{doc['content']}\n\n"
+    else:
+        context_text = "No relevant documents were found to provide context.\n\n"
+
+    # Combine context and user query
+    full_prompt = f"{context_text}User Question: {input_text}"
+
+    messages = [
+        {"role": "system", "content": system_message},
+        {"role": "user", "content": full_prompt}
+    ]
+
+
+
     # run the workflow on a task
     
     chat_result = user_proxy.initiate_chat(
-    orchestrator, message= agent_input, 
+    orchestrator, message = full_prompt, 
     summary_method="reflection_with_llm",
-    summary_prompt = (
-    "Please provide a detailed summary of the conversation. "
-    "Include the main question, key points discussed, reasoning steps, and final conclusions. "
-    "Use bullet points or paragraphs. The summary should be at least 10 lines long."
-        )
+    summary_prompt = system_message
     )
     
     return jsonify({'message':chat_result.summary})
