@@ -61,16 +61,25 @@ def retrieve_documents_from_search(query_text: str, top_n: int = 3):
 
         documents = []
         for result in search_results:
+            # --- DEBUGGING STEP: Print the entire result object ---
+            print(f"  --- Full search result document: {result}")
+            # --- END DEBUGGING STEP ---
+
             # Assuming your documents have a 'content' field and a 'title' or 'id' field
             # Adjust field names based on your Azure AI Search index schema
-            doc_content = result.get('content', 'No content found')
-            doc_title = result.get('title', result.get('id', 'Untitled Document'))
+            # IMPORTANT: Check the printed 'result' object above to find the correct field for your document's main content.
+            # It might be 'text', 'main_content', 'description', etc., instead of 'content'.
+            doc_content = result.get('content', 'No content found') # <--- **UPDATE THIS FIELD NAME IF NECESSARY**
+            doc_title = result.get('title', result.get('id', 'Untitled Document')) # <--- UPDATE THIS FIELD NAME IF NECESSARY
+
             documents.append({
                 "title": doc_title,
                 "content": doc_content,
                 "score": result['@search.score']
             })
             print(f"  - Found document: '{doc_title}' (Score: {result['@search.score']:.2f})")
+            if doc_content == 'No content found':
+                print(f"    WARNING: Content for '{doc_title}' was not found. Check your index schema for the correct content field name.")
         return documents
 
     except Exception as e:
