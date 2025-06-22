@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Prompt Generator</title>
+    <title>Indirect Tax Report Generator</title>
     <!-- Inter Font -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
     <!-- Bootstrap CSS -->
@@ -130,7 +130,7 @@
 
 <body>
     <div class="container my-5">
-        <h1>AI Prompt Generator</h1>
+        <h1>Indirect Tax Report Generator</h1>
 
         <div class="mb-3">
             <label for="promptInput" class="form-label">Enter your prompt:</label>
@@ -149,7 +149,7 @@
         <div class="mt-4">
             <label for="response-display" class="form-label">AI Response:</label>
             <div id="response-display" class="border p-3">
-                Your AI-generated response will appear here.
+                Your Multi-agnet response will appear here.
             </div>
         </div>
     </div>
@@ -246,6 +246,7 @@
 
         // Example function to call the Python backend
         async function callPythonBackend(textToReverse) {
+
             const responseDisplay = document.getElementById('response-display');
             const loadingSpinner = document.getElementById('loadingSpinner');
             const generateBtn = document.getElementById('generateBtn');
@@ -255,7 +256,7 @@
             responseDisplay.textContent = 'Calling Python backend...';
 
             try {
-                const response = await fetch('http://127.0.0.1:5000/reverse_string', {
+                const response = await fetch('http://127.0.0.1:5000/run_workflow', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -269,7 +270,7 @@
                 }
 
                 const result = await response.json();
-                responseDisplay.textContent = `Original: ${result.original}\nReversed: ${result.reversed}`;
+                responseDisplay.textContent = result.message;
 
             } catch (error) {
                 responseDisplay.textContent = `Error calling Python: ${error.message}`;
@@ -350,5 +351,4 @@
         });
     </script>
 </body>
-
 </html>
