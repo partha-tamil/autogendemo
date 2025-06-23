@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AutoGen Multi-Agent Chat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f2f5;
+        }
+        .container {
+            max-width: 900px;
+            margin: 20px auto;
+            background-color: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+            overflow: hidden;
+        }
+        .chat-container {
+            height: 500px;
+            overflow-y: auto;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .message {
+            padding: 10px 20px;
+            margin-bottom: 5px;
+            border-radius: 8px;
+            max-width: 80%;
+            word-wrap: break-word;
+        }
+        .user-message {
+            background-color: #d1e7dd; /* Light green */
+            margin-left: auto;
+            text-align: right;
+        }
+        .agent-message {
+            background-color: #e0f2f7; /* Light blue */
+            margin-right: auto;
+            text-align: left;
+        }
+        .agent-name {
+            font-weight: bold;
+            font-size: 0.9em;
+            color: #4a5568;
+            margin-bottom: 2px;
+        }
+        .summary-box {
+            background-color: #fffbeb; /* Light yellow */
+            border-left: 4px solid #f6ad55;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #3b82f6;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 p-6">
+    <div class="container p-6">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">AutoGen Multi-Agent Chat</h1>
+
+        <!-- Input for Prompt and Human-in-Loop -->
+        <div class="mb-6 p-4 bg-gray-50 rounded-lg shadow-inner">
+            <label for="userPrompt" class="block text-gray-700 text-sm font-bold mb-2">Enter your prompt or human feedback:</label>
+            <textarea id="userPrompt" class="shadow appearance-none border rounded-lg w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition duration-200" rows="3" placeholder="e.g., 'Write a Python function for quicksort.' or 'The code has an error, please fix it.'"></textarea>
+            <div class="mt-4 flex space-x-3">
+                <button id="sendMessage" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition duration-300 transform hover:scale-105">
+                    Send Message
+                </button>
+                <button id="resetChat" class="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 transition duration-300 transform hover:scale-105">
+                    Reset Chat
+                </button>
+            </div>
+            <div id="loadingIndicator" class="hidden mt-4 flex items-center justify-center">
+                <div class="spinner mr-3"></div>
+                <span class="text-gray-600">Agents are thinking...</span>
+            </div>
+        </div>
+
+        <!-- Chat History Display -->
+        <div class="bg-white rounded-lg shadow-lg">
+            <h2 class="text-xl font-semibold text-gray-700 p-4 border-b">Chat History</h2>
+            <div id="chatHistory" class="chat-container p-4">
+                <!-- Chat messages will be appended here -->
+                <p class="text-gray-500 text-center py-4">Start a conversation!</p>
+            </div>
+        </div>
+
+        <!-- Final Summary Display -->
+        <div class="summary-box mt-6">
+            <h2 class="text-xl font-semibold text-gray-700 mb-2">Summary</h2>
+            <p id="summaryText" class="text-gray-800">No summary available yet. Send a message to start.</p>
+        </div>
+    </div>
+
+    <script>
+        const sendMessageBtn = document.getElementById('sendMessage');
+        const resetChatBtn = document.getElementById('resetChat');
+        const userPromptInput = document.getElementById('userPrompt');
+        const chatHistoryDiv = document.getElementById('chatHistory');
+        const summaryText = document.getElementById('summaryText');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+
+        const API_BASE_URL = 'http://127.0.0.1:5000'; // Flask backend URL
+
+        // Function to display messages in the chat history
+        function displayMessage(sender, content, isUser = false) {
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message', 'mb-2', 'py-2', 'px-3', 'rounded-lg', 'shadow-sm');
+
+            const senderName = document.createElement('div');
+            senderName.classList.add('agent-name', 'mb-1');
+            senderName.textContent = sender;
+            messageElement.appendChild(senderName);
+
+            const messageContent = document.createElement('div');
+            // Check if content is a list (e.g., from tool_code output)
+            if (Array.isArray(content)) {
+                messageContent.innerHTML = content.map(item => {
+                    if (typeof item === 'object' && item !== null && 'content' in item) {
+                        return `<pre class="bg-gray-200 p-2 rounded-md overflow-x-auto text-sm">${escapeHtml(item.content)}</pre>`;
+                    } else if (typeof item === 'string') {
+                        return escapeHtml(item);
+                    }
+                    return '';
+                }).join('<br>'); // Join array items with line breaks
+            } else {
+                messageContent.innerHTML = formatContent(content); // Format markdown/code blocks
+            }
+            messageElement.appendChild(messageContent);
+
+            if (isUser) {
+                messageElement.classList.add('user-message', 'ml-auto', 'bg-blue-100');
+                senderName.classList.add('text-blue-700');
+            } else {
+                messageElement.classList.add('agent-message', 'mr-auto', 'bg-gray-100');
+                senderName.classList.add('text-gray-700');
+            }
+
+            chatHistoryDiv.appendChild(messageElement);
+            chatHistoryDiv.scrollTop = chatHistoryDiv.scrollHeight; // Scroll to bottom
+        }
+
+        // Helper to format content (e.g., markdown code blocks)
+        function formatContent(text) {
+            if (typeof text !== 'string') return '';
+            // Basic markdown code block detection for display
+            return text.replace(/```python\n([\s\S]*?)\n```/g, (match, code) => {
+                return `<pre class="bg-gray-200 p-2 rounded-md overflow-x-auto text-sm"><code>${escapeHtml(code)}</code></pre>`;
+            }).replace(/```([\s\S]*?)\n```/g, (match, code) => {
+                return `<pre class="bg-gray-200 p-2 rounded-md overflow-x-auto text-sm"><code>${escapeHtml(code)}</code></pre>`;
+            }).replace(/\n/g, '<br>'); // Replace newlines with <br> for HTML display
+        }
+
+        // Helper to escape HTML to prevent XSS
+        function escapeHtml(text) {
+            return text
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        // Function to send message to backend
+        async function sendMessage() {
+            const prompt = userPromptInput.value.trim();
+            if (!prompt) {
+                alert('Please enter a message.');
+                return;
+            }
+
+            // Clear previous messages if it's the very first prompt
+            if (chatHistoryDiv.children.length === 1 && chatHistoryDiv.children[0].textContent === "Start a conversation!") {
+                 chatHistoryDiv.innerHTML = '';
+            }
+
+            displayMessage('User', prompt, true); // Display user's message immediately
+            userPromptInput.value = ''; // Clear input field
+
+            loadingIndicator.classList.remove('hidden');
+            sendMessageBtn.disabled = true;
+            resetChatBtn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/start_chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ message: prompt, sessionId: 'user_session_1' }), // Example sessionId
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                console.log(data);
+
+                // Clear history and re-render the full history from the response
+                chatHistoryDiv.innerHTML = '';
+                if (data.history && Array.isArray(data.history)) {
+                    data.history.forEach(msg => {
+                        // Determine if the message is from the User or an agent
+                        // In Autogen chat history, 'role: user' refers to messages sent to the assistant/manager.
+                        // 'name: User' is our UserProxyAgent.
+                        // We display 'User' messages as user-sent and others as agent-sent.
+                        const isUserMessage = msg.sender === 'User' || (msg.role === 'user' && msg.sender === undefined);
+                        displayMessage(msg.sender || msg.name, msg.content, isUserMessage);
+                    });
+                }
+                summaryText.textContent = data.summary || "No specific summary provided.";
+
+            } catch (error) {
+                console.error('Error:', error);
+                displayMessage('System Error', `Failed to communicate with the backend: ${error.message}`, false);
+                summaryText.textContent = `Error: ${error.message}`;
+            } finally {
+                loadingIndicator.classList.add('hidden');
+                sendMessageBtn.disabled = false;
+                resetChatBtn.disabled = false;
+            }
+        }
+
+        // Function to reset chat history on the backend
+        async function resetChatHistory() {
+            if (!confirm("Are you sure you want to reset the chat history? This cannot be undone.")) {
+                return;
+            }
+
+            loadingIndicator.classList.remove('hidden');
+            sendMessageBtn.disabled = true;
+            resetChatBtn.disabled = true;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/reset_chat`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                alert(data.message);
+                chatHistoryDiv.innerHTML = '<p class="text-gray-500 text-center py-4">Start a conversation!</p>';
+                summaryText.textContent = "No summary available yet. Send a message to start.";
+                userPromptInput.value = '';
+
+            } catch (error) {
+                console.error('Error resetting chat:', error);
+                alert(`Error resetting chat: ${error.message}`);
+            } finally {
+                loadingIndicator.classList.add('hidden');
+                sendMessageBtn.disabled = false;
+                resetChatBtn.disabled = false;
+            }
+        }
+
+
+        // Event Listeners
+        sendMessageBtn.addEventListener('click', sendMessage);
+        resetChatBtn.addEventListener('click', resetChatHistory);
+        userPromptInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) { // Send on Enter, allow Shift+Enter for newline
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // Initial setup for the UI
+        document.addEventListener('DOMContentLoaded', () => {
+            // You might want to fetch initial history here if applicable
+            // For now, it starts fresh visually. Backend will load on first message.
+        });
+    </script>
+</body>
+</html>
+
