@@ -1,185 +1,144 @@
 import autogen
 import json
 import os
-from typing import Dict, List, Union
 
 # --- Configuration ---
-# Replace with your actual OpenAI API key or other LLM configuration
+# Define the path for the chat history file
+CHAT_HISTORY_FILE = "autogen_chat_history.json"
+
+# Autogen configuration for LLM
+# Replace with your actual LLM configuration
+# For example, using OpenAI API key from environment variable
+# If you don't have an API key, you can set 'model' to a local LLM or mock it for testing.
+config_list = autogen.config_list_from_json(
+    "OAI_CONFIG_LIST",
+    filter_dict={
+        "model": ["gpt-4", "gpt-3.5-turbo"], # Specify the models you want to use
+    },
+)
+
 llm_config = {
-    "config_list": [
-        {
-            "model": "gpt-4", # Or "gpt-3.5-turbo", etc.
-            "api_key": os.environ.get("OPENAI_API_KEY"), # Ensure OPENAI_API_KEY is set in your environment variables
-        }
-    ]
+    "config_list": config_list,
+    "temperature": 0.7, # Adjust temperature for creativity/determinism
 }
 
-# --- File Paths for Storing History ---
-CHAT_HISTORY_FILE = "autogen_group_chat_history.json"
+# --- Persistence Functions ---
 
-# --- Helper Functions ---
+def save_chat_history(messages, filename=CHAT_HISTORY_FILE):
+    """
+    Saves the chat history to a JSON file.
+    Args:
+        messages (list): A list of message dictionaries from the chat.
+        filename (str): The name of the file to save the history to.
+    """
+    print(f"Saving chat history to {filename}...")
+    with open(filename, 'w') as f:
+        json.dump(messages, f, indent=4)
+    print("Chat history saved.")
 
-def save_chat_history(chat_messages: List[Dict], filename: str):
-    """Saves the chat history (list of message dicts) to a JSON file."""
-    try:
-        with open(filename, "w") as f:
-            json.dump(chat_messages, f, indent=4)
-        print(f"\n--- Chat history saved to {filename} ---")
-    except Exception as e:
-        print(f"Error saving chat history: {e}")
-
-def load_chat_history(filename: str) -> List[Dict]:
-    """Loads chat history (list of message dicts) from a JSON file."""
+def load_chat_history(filename=CHAT_HISTORY_FILE):
+    """
+    Loads chat history from a JSON file.
+    Args:
+        filename (str): The name of the file to load the history from.
+    Returns:
+        list: A list of message dictionaries, or an empty list if the file doesn't exist.
+    """
     if os.path.exists(filename):
-        try:
-            with open(filename, "r") as f:
-                history = json.load(f)
-            print(f"\n--- Chat history loaded from {filename} ---")
-            return history
-        except json.JSONDecodeError as e:
-            print(f"Error decoding JSON from {filename}: {e}")
-            return []
-        except Exception as e:
-            print(f"Error loading chat history: {e}")
-            return []
+        print(f"Loading chat history from {filename}...")
+        with open(filename, 'r') as f:
+            messages = json.load(f)
+        print(f"Loaded {len(messages)} messages.")
+        return messages
     else:
-        print(f"No chat history file found at {filename}. Starting fresh.")
+        print(f"No existing chat history found at {filename}. Starting fresh.")
         return []
 
-# --- Main Demonstration ---
+# --- AutoGen Agents Setup ---
 
-def run_demonstration():
-    print("--- Starting AutoGen Group Chat Memory Persistence Demonstration ---")
+def create_agents(llm_config):
+    """
+    Creates and returns AutoGen agents.
+    Args:
+        llm_config (dict): LLM configuration for the agents.
+    Returns:
+        tuple: (user_proxy_agent, assistant_agent)
+    """
+    user_proxy = autogen.UserProxyAgent(
+        name="User",
+        human_input_mode="ALWAYS", # Allows human input to continue the conversation
+        max_consecutive_auto_reply=10,
+        is_termination_msg=lambda x: "TERMINATE" in x.get("content", "").upper(),
+        code_execution_config={
+            "work_dir": "coding", # Directory for code execution
+            "use_docker": False, # Set to True if you have Docker installed and want isolated execution
+        },
+    )
 
-    # --- PART 1: Initial Group Chat Conversation ---
-    print("\n\n--- PART 1: Initial Group Chat Conversation ---")
-    print("Agents will discuss a user preference and a task.")
-
-    # Define agents for the initial group chat
-    user_proxy_group = autogen.UserProxyAgent(
-        name="User_Proxy",
-        system_message="A human user proxy. You can ask questions and give instructions.",
+    assistant = autogen.AssistantAgent(
+        name="Assistant",
         llm_config=llm_config,
-        human_input_mode="NEVER", # Set to "ALWAYS" for interactive input
-        code_execution_config=False,
+        system_message="You are a helpful AI assistant. Please respond to user queries concisely. "
+                        "Say 'TERMINATE' when the task is done and you have nothing more to add.",
+    )
+    return user_proxy, assistant
+
+# --- Simulation of Sessions ---
+
+def run_session(session_name, initial_message=None):
+    """
+    Simulates a single chat session.
+    Loads history, runs chat, and saves history.
+    Args:
+        session_name (str): Name of the current session (for logging).
+        initial_message (str, optional): The first message to start the chat.
+    """
+    print(f"\n--- Starting {session_name} ---")
+
+    # Load previous chat history
+    loaded_history = load_chat_history()
+
+    # Create agents
+    user_proxy, assistant = create_agents(llm_config)
+
+    # Initialize chat with loaded history
+    # The 'message' parameter is used for the very first message of the chat.
+    # The 'chat_history' parameter ensures previous messages are loaded.
+    # 'clear_history=False' is important to append to the existing history.
+    chat_result = user_proxy.initiate_chat(
+        assistant,
+        message=initial_message,
+        clear_history=False, # Keep previous history
+        chat_history=loaded_history # Provide the loaded history
     )
 
-    product_manager = autogen.AssistantAgent(
-        name="Product_Manager",
-        system_message="You are a product manager. You collect requirements and assign tasks. You remember user preferences.",
-        llm_config=llm_config,
-        code_execution_config=False,
-    )
+    # The chat_history attribute of the chat_result object contains all messages from this conversation
+    # (including the loaded history and the new exchanges).
+    all_messages = chat_result.chat_history
 
-    engineer = autogen.AssistantAgent(
-        name="Engineer",
-        system_message="You are an engineer. You provide technical solutions and estimates.",
-        llm_config=llm_config,
-        code_execution_config=False,
-    )
+    # Save the updated chat history for the next session
+    save_chat_history(all_messages)
 
-    # Create the GroupChat
-    groupchat_initial = autogen.GroupChat(
-        agents=[user_proxy_group, product_manager, engineer],
-        messages=[], # Start with an empty message list for the group
-        max_round=10,
-        speaker_selection_method="auto"
-    )
+    print(f"--- {session_name} Finished ---")
 
-    # Create the GroupChatManager to orchestrate the initial chat
-    manager_initial = autogen.GroupChatManager(
-        groupchat=groupchat_initial,
-        llm_config=llm_config
-    )
-
-    print("\nUser_Proxy: Our new project codename is 'Phoenix'. Also, I prefer all technical documentation to be concise.")
-    initial_group_chat_result = user_proxy_group.initiate_chat(
-        manager_initial,
-        message="Our new project codename is 'Phoenix'. Also, I prefer all technical documentation to be concise.",
-        clear_history=False # Important for group chats, don't clear manager's history
-    )
-
-    # Let the agents have a small discussion
-    print("\nUser_Proxy: Product_Manager, can you outline the initial steps for Phoenix?")
-    user_proxy_group.send(
-        "Product_Manager, can you outline the initial steps for Phoenix?",
-        recipient=manager_initial,
-        request_reply=True
-    )
-    # The agents should discuss and include "Phoenix" and "concise documentation" in their context.
-
-    # --- Save the group chat history ---
-    # The GroupChatManager's internal groupchat.messages holds the conversation history
-    save_chat_history(manager_initial.groupchat.messages, CHAT_HISTORY_FILE)
-
-
-    # --- PART 2: New Group Chat Session - Load and Use History ---
-    print("\n\n--- PART 2: New Group Chat Session - Load and Use History ---")
-    print("Simulating a new session. Agents should recall 'Phoenix' and documentation preference.")
-
-    # Load the previously saved history
-    loaded_chat_history = load_chat_history(CHAT_HISTORY_FILE)
-
-    # Initialize new agents for the "new session"
-    # Important: Agents in a group chat also need to receive the history
-    user_proxy_new_session = autogen.UserProxyAgent(
-        name="User_Proxy", # Keep name consistent for agent identity across sessions
-        system_message="A human user proxy for a new session.",
-        llm_config=llm_config,
-        human_input_mode="NEVER",
-        code_execution_config=False,
-        chat_messages={manager_initial.name: loaded_chat_history} # Inject loaded history for user_proxy in relation to manager
-    )
-
-    product_manager_new_session = autogen.AssistantAgent(
-        name="Product_Manager",
-        system_message="You are a product manager. You collect requirements and assign tasks. You remember user preferences.",
-        llm_config=llm_config,
-        code_execution_config=False,
-        chat_messages={user_proxy_new_session.name: loaded_chat_history} # Inject loaded history for product_manager in relation to user_proxy
-    )
-
-    engineer_new_session = autogen.AssistantAgent(
-        name="Engineer",
-        system_message="You are an engineer. You provide technical solutions and estimates.",
-        llm_config=llm_config,
-        code_execution_config=False,
-        chat_messages={user_proxy_new_session.name: loaded_chat_history} # Inject loaded history for engineer in relation to user_proxy
-    )
-    # Note: For simplicity, we are injecting the full history into each agent's chat_messages related to the user_proxy.
-    # In more complex scenarios, you might need to filter or summarize the history per agent.
-
-    # Create a new GroupChat and Manager for the new session
-    groupchat_new_session = autogen.GroupChat(
-        agents=[user_proxy_new_session, product_manager_new_session, engineer_new_session],
-        messages=loaded_chat_history, # Pass the loaded history to the groupchat itself
-        max_round=10,
-        speaker_selection_method="auto"
-    )
-
-    manager_new_session = autogen.GroupChatManager(
-        groupchat=groupchat_new_session,
-        llm_config=llm_config
-    )
-
-    # Now, initiate a new chat, asking a question that relies on the loaded history
-    print("\nUser_Proxy: Engineer, what's our current understanding of the 'Phoenix' project scope, and remember my documentation preference.")
-    final_group_chat_result = user_proxy_new_session.initiate_chat(
-        manager_new_session,
-        message="Engineer, what's our current understanding of the 'Phoenix' project scope, and remember my documentation preference.",
-        clear_history=False # Do not clear the loaded history
-    )
-
-    # Observe the responses to see if they recall "Phoenix" and "concise" documentation.
-    # You might need to check the full chat history of the result to see how agents interact.
-    print(f"\n--- Final Group Chat Result (last message): ---\n{final_group_chat_result.last_message['content']}")
-
-    print("\n--- Demonstration Complete ---")
-
+# --- Main Execution ---
 if __name__ == "__main__":
-    run_demonstration()
+    # --- Session 1 ---
+    # User starts a conversation.
+    # The agents will not have any prior context unless loaded from the file.
+    run_session(
+        "Session 1: Initial Conversation",
+        initial_message="Hello, Assistant! My name is Alice. Can you tell me a fun fact about pandas?"
+    )
 
-    # Optional: Clean up the history file after demonstration
-    # if os.path.exists(CHAT_HISTORY_FILE):
-    #     os.remove(CHAT_HISTORY_FILE)
-    #     print(f"Cleaned up {CHAT_HISTORY_FILE}")
+    # --- Session 2 ---
+    # User returns for a new conversation.
+    # The agents should now remember "Alice" and the previous context.
+    input("\nPress Enter to start Session 2 (should remember Alice and pandas fact)...")
+    run_session(
+        "Session 2: Continuing Conversation",
+        initial_message="Hi again! What was that fact you told me about? And what else do you know about their diet?"
+    )
+
+    print("\nDemonstration complete. Check 'autogen_chat_history.json' for the saved messages.")
+    print("To run again from scratch, delete the 'autogen_chat_history.json' file.")
