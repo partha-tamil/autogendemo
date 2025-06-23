@@ -114,11 +114,8 @@ def initialize_agents(llm_config):
             human_input_mode="NEVER", # IMPORTANT: We will feed human input via API calls
             max_consecutive_auto_reply=10,
             is_termination_msg=lambda x: "TERMINATE" in x.get("content", "").upper(),
-            code_execution_config={
-                "work_dir": "coding", # Directory for code execution
-                "use_docker": False, # Set to True if you have Docker installed and want isolated execution
-                # Ensure the 'coding' directory exists or is created by the agent
-            },
+            # Set code_execution_config to False to prevent the UserProxyAgent from attempting to execute code
+            code_execution_config=False,
             system_message="You are the human user. Your input comes from the web UI. "
                             "You can provide feedback, approve code, or tell the agents to TERMINATE. "
                             "When you send a message, it's considered a new human input.",
@@ -128,6 +125,8 @@ def initialize_agents(llm_config):
         assistant = autogen.AssistantAgent(
             name="Assistant",
             llm_config=llm_config,
+            # Set code_execution_config to False for this agent
+            code_execution_config=False,
             system_message="You are a helpful AI assistant. You can assist with planning, "
                             "answering questions, and general problem-solving.",
         )
@@ -136,23 +135,24 @@ def initialize_agents(llm_config):
         coder = autogen.AssistantAgent(
             name="Coder",
             llm_config=llm_config,
-            code_execution_config={
-                "work_dir": "coding",
-                "use_docker": False,
-            },
-            system_message="You are a Python programmer. You write and debug Python code. "
-                            "Provide code in markdown blocks. If a task requires code execution, "
-                            "ask the User to run it and provide output. "
-                            "Confirm when a task is completed with the code.",
+            # Set code_execution_config to False for this agent
+            # The coder will still *generate* code, but won't expect it to be executed automatically
+            code_execution_config=False,
+            system_message="You are a Python programmer. You write Python code snippets or full scripts. "
+                            "Provide code in markdown blocks. Do not ask the User to run code, "
+                            "just provide the solution or explain the code. "
+                            "Say 'TERMINATE' when your task is done.",
         )
 
         # A critic agent to review solutions and provide constructive feedback
         critic = autogen.AssistantAgent(
             name="Critic",
             llm_config=llm_config,
+            # Set code_execution_config to False for this agent
+            code_execution_config=False,
             system_message="You are a critic. Your role is to review the proposed solutions, "
                             "especially code, and identify potential issues, improvements, or errors. "
-                            "Provide constructive feedback.",
+                            "Provide constructive feedback. Say 'TERMINATE' when your review is complete.",
         )
 
         # Create a GroupChat to manage the multi-agent conversation
@@ -211,7 +211,13 @@ def start_chat():
         if all_messages:
             last_message_content = all_messages[-1].get("content")
             if isinstance(last_message_content, str):
-                summary = f"Last message: {last_message_content[:150]}..." if len(last_message_content) > 150 else last_message_content
+                # Attempt to find the last meaningful message from an agent
+                for msg in reversed(all_messages):
+                    if msg.get('role') == 'assistant' and isinstance(msg.get('content'), str) and msg.get('content').strip() and "TERMINATE" not in msg.get('content').upper():
+                        summary = f"Last agent response: {msg['content'][:200]}..." if len(msg['content']) > 200 else msg['content']
+                        break
+                if summary == "Conversation completed. Please review the full chat history.": # Fallback if no suitable agent message found
+                     summary = f"Last message: {last_message_content[:150]}..." if len(last_message_content) > 150 else last_message_content
             else:
                 summary = "Conversation ended."
 
@@ -248,6 +254,7 @@ def reset_chat():
 
 if __name__ == "__main__":
     # Ensure the 'coding' directory exists for code execution by agents
+    # This directory will still be created, but not used for auto-execution in this setup.
     if not os.path.exists("coding"):
         os.makedirs("coding")
     print(f"Starting Flask server on http://127.0.0.1:5000")
