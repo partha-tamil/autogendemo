@@ -1,0 +1,255 @@
+import autogen
+import json
+import os
+from flask import Flask, request, jsonify
+from flask_cors import CORS # Required for cross-origin requests from your HTML file
+
+app = Flask(__name__)
+CORS(app) # Enable CORS for all routes
+
+# --- Configuration ---
+# Define the path for the chat history file
+CHAT_HISTORY_FILE = "autogen_human_in_loop_chat_history.json"
+
+# Autogen configuration for LLM
+# Replace with your actual LLM configuration in OAI_CONFIG_LIST file.
+# For example, using OpenAI API key from environment variable
+# If you don't have an API key, you can set 'model' to a local LLM or mock it for testing.
+try:
+    config_list = autogen.config_list_from_json(
+        "OAI_CONFIG_LIST",
+        filter_dict={
+            "model": ["gpt-4", "gpt-3.5-turbo"], # Specify the models you want to use
+        },
+    )
+except FileNotFoundError:
+    print(f"Error: OAI_CONFIG_LIST not found. Please create this file with your LLM configuration.")
+    print("Example OAI_CONFIG_LIST content:")
+    print('''
+[
+    {
+        "model": "gpt-4",
+        "api_key": "YOUR_OPENAI_API_KEY"
+    },
+    {
+        "model": "gpt-3.5-turbo",
+        "api_key": "YOUR_OPENAI_API_KEY"
+    }
+]
+    ''')
+    # In a production Flask app, you might raise an exception or handle this more gracefully.
+    # For this example, we'll proceed with a mock config if OAI_CONFIG_LIST is missing,
+    # but the LLM-based agents won't work correctly.
+    config_list = [{"model": "mock-model", "api_key": "mock-key"}]
+
+
+llm_config = {
+    "config_list": config_list,
+    "temperature": 0.7, # Adjust temperature for creativity/determinism
+}
+
+# --- Persistence Functions ---
+
+def save_chat_history(messages, filename=CHAT_HISTORY_FILE):
+    """
+    Saves the chat history to a JSON file.
+    Args:
+        messages (list): A list of message dictionaries from the chat.
+        filename (str): The name of the file to save the history to.
+    """
+    print(f"\n--- Saving chat history to {filename} ---")
+    try:
+        with open(filename, 'w') as f:
+            json.dump(messages, f, indent=4)
+        print("Chat history saved successfully.")
+    except IOError as e:
+        print(f"Error saving chat history: {e}")
+
+def load_chat_history(filename=CHAT_HISTORY_FILE):
+    """
+    Loads chat history from a JSON file.
+    Args:
+        filename (str): The name of the file to load the history from.
+    Returns:
+        list: A list of message dictionaries, or an empty list if the file doesn't exist.
+    """
+    if os.path.exists(filename):
+        print(f"\n--- Loading chat history from {filename} ---")
+        try:
+            with open(filename, 'r') as f:
+                messages = json.load(f)
+            print(f"Loaded {len(messages)} messages.")
+            return messages
+        except json.JSONDecodeError as e:
+            print(f"Error decoding JSON from history file: {e}. Starting fresh.")
+            return []
+        except IOError as e:
+            print(f"Error loading chat history: {e}. Starting fresh.")
+            return []
+    else:
+        print(f"No existing chat history found at {filename}. Starting fresh.")
+        return []
+
+# --- AutoGen Agents Setup for Multi-Agent Conversation ---
+
+# Global variables to hold agents and manager state
+# This is a simplification for a single-user demo. For multi-user,
+# you'd manage sessions and agent instances per user.
+user_proxy_agent = None
+groupchat_manager = None
+
+def initialize_agents(llm_config):
+    """
+    Initializes AutoGen agents and the group chat manager.
+    Sets them as global variables for persistent access across requests.
+    """
+    global user_proxy_agent, groupchat_manager
+
+    if user_proxy_agent is None or groupchat_manager is None:
+        print("Initializing AutoGen agents...")
+        # The UserProxyAgent acts as the human and can provide input
+        # Set human_input_mode to "NEVER" for web interaction, as we'll feed input via API
+        user_proxy_agent = autogen.UserProxyAgent(
+            name="User",
+            human_input_mode="NEVER", # IMPORTANT: We will feed human input via API calls
+            max_consecutive_auto_reply=10,
+            is_termination_msg=lambda x: "TERMINATE" in x.get("content", "").upper(),
+            code_execution_config={
+                "work_dir": "coding", # Directory for code execution
+                "use_docker": False, # Set to True if you have Docker installed and want isolated execution
+                # Ensure the 'coding' directory exists or is created by the agent
+            },
+            system_message="You are the human user. Your input comes from the web UI. "
+                            "You can provide feedback, approve code, or tell the agents to TERMINATE. "
+                            "When you send a message, it's considered a new human input.",
+        )
+
+        # An assistant agent to help with planning and general tasks
+        assistant = autogen.AssistantAgent(
+            name="Assistant",
+            llm_config=llm_config,
+            system_message="You are a helpful AI assistant. You can assist with planning, "
+                            "answering questions, and general problem-solving.",
+        )
+
+        # A coder agent specialized in writing and debugging code
+        coder = autogen.AssistantAgent(
+            name="Coder",
+            llm_config=llm_config,
+            code_execution_config={
+                "work_dir": "coding",
+                "use_docker": False,
+            },
+            system_message="You are a Python programmer. You write and debug Python code. "
+                            "Provide code in markdown blocks. If a task requires code execution, "
+                            "ask the User to run it and provide output. "
+                            "Confirm when a task is completed with the code.",
+        )
+
+        # A critic agent to review solutions and provide constructive feedback
+        critic = autogen.AssistantAgent(
+            name="Critic",
+            llm_config=llm_config,
+            system_message="You are a critic. Your role is to review the proposed solutions, "
+                            "especially code, and identify potential issues, improvements, or errors. "
+                            "Provide constructive feedback.",
+        )
+
+        # Create a GroupChat to manage the multi-agent conversation
+        groupchat = autogen.GroupChat(
+            agents=[user_proxy_agent, assistant, coder, critic],
+            messages=[], # Messages will be populated by the chat dynamically
+            max_round=15, # Maximum rounds in the group chat
+            speaker_selection_method="auto", # Auto-selects the next speaker
+            allow_repeat_speaker=False, # Avoid agents talking twice in a row unnecessarily
+        )
+
+        # Create a GroupChatManager to orchestrate the group chat
+        groupchat_manager = autogen.GroupChatManager(
+            groupchat=groupchat,
+            llm_config=llm_config
+        )
+        print("AutoGen agents initialized.")
+    else:
+        print("AutoGen agents already initialized.")
+
+# Initialize agents when the Flask app starts
+initialize_agents(llm_config)
+
+
+# --- Flask Routes ---
+
+@app.route('/start_chat', methods=['POST'])
+def start_chat():
+    data = request.json
+    user_message = data.get('message', '')
+    session_id = data.get('sessionId', 'default_session') # Placeholder for session management
+
+    # Load history for the session (if you implement session-specific files)
+    loaded_history = load_chat_history(f"{CHAT_HISTORY_FILE}")
+
+    # Set the loaded history to the groupchat's messages
+    groupchat_manager.groupchat.messages = loaded_history
+
+    print(f"\n--- Received initial message from UI: {user_message} ---")
+
+    try:
+        # Initiate the chat. The user_proxy will now receive this message
+        # as if it were a direct input. The agents will then converse.
+        # This will run until a termination message is sent or max_round is reached.
+        chat_result = user_proxy_agent.initiate_chat(
+            groupchat_manager,
+            message=user_message,
+            clear_history=False, # We manage history loading/saving manually
+        )
+
+        # After chat terminates, get all messages
+        all_messages = chat_result.chat_history
+
+        # Generate a simple summary (you can make this more sophisticated)
+        summary = "Conversation completed. Please review the full chat history."
+        if all_messages:
+            last_message_content = all_messages[-1].get("content")
+            if isinstance(last_message_content, str):
+                summary = f"Last message: {last_message_content[:150]}..." if len(last_message_content) > 150 else last_message_content
+            else:
+                summary = "Conversation ended."
+
+
+        # Save the updated history
+        save_chat_history(all_messages, f"{CHAT_HISTORY_FILE}")
+
+        # Return the messages and summary
+        return jsonify({
+            'history': [msg for msg in all_messages if isinstance(msg, dict)], # Ensure dict type for JSON serialization
+            'summary': summary,
+            'status': 'completed'
+        })
+
+    except Exception as e:
+        print(f"An error occurred during chat: {e}")
+        return jsonify({'error': str(e), 'status': 'error'}), 500
+
+@app.route('/reset_chat', methods=['POST'])
+def reset_chat():
+    """Resets the chat history file."""
+    try:
+        if os.path.exists(CHAT_HISTORY_FILE):
+            os.remove(CHAT_HISTORY_FILE)
+            print(f"Chat history file '{CHAT_HISTORY_FILE}' deleted.")
+        # Re-initialize agents to clear any in-memory state as well
+        global user_proxy_agent, groupchat_manager
+        user_proxy_agent = None
+        groupchat_manager = None
+        initialize_agents(llm_config) # Re-create agents fresh
+        return jsonify({'message': 'Chat history reset successfully'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+if __name__ == "__main__":
+    # Ensure the 'coding' directory exists for code execution by agents
+    if not os.path.exists("coding"):
+        os.makedirs("coding")
+    print(f"Starting Flask server on http://127.0.0.1:5000")
+    print("Make sure your OAI_CONFIG_LIST file is correctly set up.")
+    app.run(debug=True, port=5000) # Run in debug mode for development
