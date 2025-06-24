@@ -192,10 +192,11 @@
         }
 
         // Event listener for Submit Prompt button
-        submitPromptBtn.addEventListener('click', () => {
+        submitPromptBtn.addEventListener('click', async () => { // Changed to async function
             const prompt = userPromptInput.value.trim();
             if (!prompt) {
-                alert('Please enter a prompt!'); // Using alert for simplicity, replace with custom modal for production
+                // IMPORTANT: For production, replace this with a custom modal/toast, not alert().
+                alert('Please enter a prompt before getting a response.');
                 return;
             }
 
@@ -206,47 +207,37 @@
             proceedToReviewBtn.classList.add('d-none');
             agentResponseDisplay.textContent = ''; // Clear previous response
 
-            // --- Simulate Agent Interaction ---
-            // In a real application, you would send 'prompt' to your Python backend here.
-            // Example fetch call (conceptual):
-            /*
-            fetch('/api/get-agent-response', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ prompt: prompt })
-            })
-            .then(response => response.json())
-            .then(data => {
-                currentAgentResponse = data.agent_response; // Assuming backend sends 'agent_response'
+            try {
+                // --- Call Backend start_chat API ---
+                // IMPORTANT: Use the full URL for your Flask backend, typically http://127.0.0.1:5000
+                const response = await fetch('http://127.0.0.1:5000/start_chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ prompt: prompt }),
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({})); // Try to parse error message
+                    const errorMessage = errorData.error || `HTTP error! Status: ${response.status}`;
+                    throw new Error(errorMessage);
+                }
+
+                const data = await response.json();
+                // Assuming the backend sends the agent's response in a field named 'agent_response'
+                currentAgentResponse = data.agent_response || "No response received from agent.";
                 agentResponseDisplay.textContent = currentAgentResponse;
-                loadingSpinner.style.display = 'none';
-                agentResponseDisplay.classList.remove('d-none');
-                proceedToReviewBtn.classList.remove('d-none');
-            })
-            .catch(error => {
+
+            } catch (error) {
                 console.error('Error fetching agent response:', error);
-                agentResponseDisplay.textContent = 'Error: Could not get response from agent.';
+                // For production, use a custom message box or toast notification instead of alert()
+                agentResponseDisplay.textContent = `Error: ${error.message}. Please ensure the backend server is running and accessible.`;
+            } finally {
                 loadingSpinner.style.display = 'none';
                 agentResponseDisplay.classList.remove('d-none');
                 proceedToReviewBtn.classList.remove('d-none');
-            });
-            */
-
-            // Simulate a delay and a response
-            setTimeout(() => {
-                const simulatedResponse = `Agent's simulated response for: "${prompt}"\n\n` +
-                                          `Based on simulated Azure AI Search, here's some information:\n` +
-                                          `Azure AI Search provides powerful full-text search capabilities, semantic search for better relevance, ` +
-                                          `and vectors search for RAG patterns. It handles large datasets, offers multi-language support, ` +
-                                          `and integrates well with other Azure services like Azure OpenAI Service for enhanced AI experiences. ` +
-                                          `It's highly scalable and designed for enterprise-grade applications.`;
-                currentAgentResponse = simulatedResponse;
-                agentResponseDisplay.textContent = currentAgentResponse;
-
-                loadingSpinner.style.display = 'none';
-                agentResponseDisplay.classList.remove('d-none');
-                proceedToReviewBtn.classList.remove('d-none');
-            }, 3000); // Simulate 3 seconds processing time
+            }
         });
 
         // Event listener for Proceed to Review button
@@ -257,7 +248,8 @@
 
         // Event listener for Approve button
         approveBtn.addEventListener('click', () => {
-            alert('Response Approved! (Action logged)'); // Replace with custom modal
+            // For production, replace this with a custom modal/toast, not alert().
+            alert('Response Approved! (Action logged to console)');
             console.log("User Approved Response:", currentAgentResponse);
             showPage(page1); // Return to home after action
             userPromptInput.value = ''; // Clear input
@@ -265,7 +257,8 @@
 
         // Event listener for Reject button
         rejectBtn.addEventListener('click', () => {
-            alert('Response Rejected! (Action logged)'); // Replace with custom modal
+            // For production, replace this with a custom modal/toast, not alert().
+            alert('Response Rejected! (Action logged to console)');
             console.log("User Rejected Response:", currentAgentResponse);
             showPage(page1); // Return to home after action
             userPromptInput.value = ''; // Clear input
