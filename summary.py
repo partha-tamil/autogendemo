@@ -1,94 +1,183 @@
 import autogen
+from typing_extensions import Annotated
+import json
 
-# --- 1. Define Agent Configuration ---
+# --- IMPORTANT: Replace this with your actual AI Search Integration ---
+def ai_search_knowledge_store(query: Annotated[str, "The search query to send to the knowledge store."]) -> str:
+    """
+    Performs a search on the external AI knowledge store and returns the relevant results.
+    This is a MOCKED function. In a real application, connect to your actual AI Search service.
+    Returns results in a structured format (e.g., Markdown table, JSON) if possible.
+    """
+    print(f"\n--- Agent calling AI Search with query: '{query}' ---")
+
+    knowledge_base = {
+        "sales_q1_2025": {
+            "title": "Sales Report Q1 2025",
+            "content": "Total sales for Q1 2025 were $1.5 million. Key contributors were Product X ($800K), Product Y ($400K), and Service Z ($300K). This represents a 15% increase year-over-year. Region APAC showed significant growth.",
+            "source": "Internal Sales Database"
+        },
+        "product_x_features": {
+            "title": "Product X Features and Benefits",
+            "content": "Product X is our flagship AI-powered analytics platform. Key features include: real-time data processing, predictive modeling, customizable dashboards, and seamless integration with existing CRM systems. Benefits: improved decision-making, operational efficiency, and competitive advantage.",
+            "source": "Product Documentation"
+        },
+        "product_y_features": {
+            "title": "Product Y Features",
+            "content": "Product Y is our new cloud-based collaboration tool. Features: secure file sharing, video conferencing, task management, and mobile accessibility. Benefits: enhanced team productivity and remote work capabilities.",
+            "source": "Product Documentation"
+        },
+        "market_trends_ai_assistants": {
+            "title": "Current Market Trends in AI Assistants",
+            "content": "The AI assistant market is experiencing rapid growth driven by advancements in natural language processing and increased demand for automation. Key trends include: hyper-personalization, multimodal capabilities, edge AI integration, and ethical AI considerations.",
+            "source": "Industry Research Report"
+        },
+        "competitors_ai_space": {
+            "title": "Top Competitors in AI Assistant Space",
+            "content": "Major competitors include companies like Google (Duet AI), Microsoft (Copilot), and OpenAI (ChatGPT Enterprise). They focus on enterprise solutions, integration with existing software ecosystems, and highly specialized vertical applications.",
+            "source": "Competitor Analysis Report"
+        },
+        "default_response": {
+            "title": "General Business Information",
+            "content": "Our company is a leading technology provider specializing in AI solutions for enterprise clients. We focus on innovation, customer satisfaction, and delivering measurable business value. Specific information might require a more focused query.",
+            "source": "Company Profile"
+        }
+    }
+
+    relevant_results = []
+    for key, data in knowledge_base.items():
+        if query.lower() in data["title"].lower() or query.lower() in data["content"].lower():
+            relevant_results.append(data)
+            break
+
+    if not relevant_results:
+        if "sales" in query.lower() or "figure" in query.lower():
+            if "Q1 2025" in query:
+                 relevant_results.append(knowledge_base["sales_q1_2025"])
+            else:
+                 relevant_results.append(knowledge_base["sales_q1_2025"])
+        elif "product" in query.lower() and ("feature" in query.lower() or "spec" in query.lower()):
+            relevant_results.append(knowledge_base["product_x_features"])
+        elif "market" in query.lower() or "trend" in query.lower():
+             relevant_results.append(knowledge_base["market_trends_ai_assistants"])
+        elif "competitor" in query.lower() or "rival" in query.lower():
+             relevant_results.append(knowledge_base["competitors_ai_space"])
+        else:
+            relevant_results.append(knowledge_base["default_response"])
+
+    formatted_output = ""
+    if relevant_results:
+        for res in relevant_results:
+            formatted_output += f"### {res['title']}\n"
+            formatted_output += f"Source: {res['source']}\n"
+            formatted_output += f"{res['content']}\n\n"
+    else:
+        formatted_output = "No highly relevant information found for your specific query in the knowledge store. Please try a different query or be more specific."
+
+    return formatted_output
+
+# --- 2. Initialize Agents ---
 config_list = autogen.config_list_from_json(
     "OAI_CONFIG_LIST",
     filter_dict={
-        "model": ["gpt-4", "gpt-3.5-turbo"], # Or whatever models you have configured
+        "model": ["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"],
     },
 )
 
-# --- 2. Initialize Agents ---
-
-# User Proxy Agent: Acts as the human user, initiates tasks, and receives final output.
 user_proxy = autogen.UserProxyAgent(
     name="Admin",
-    system_message="A human admin. You will provide the initial task and review the final summary.",
+    system_message="A human admin. You initiate tasks, review intermediate steps, and decide when the final summary is acceptable. You can approve or reject the final summary. You have access to tools for execution.",
     code_execution_config={"last_n_messages": 1, "work_dir": "coding"},
-    human_input_mode="NEVER",  # Set to "ALWAYS" or "TERMINATE" for human interaction
+    human_input_mode="NEVER",
+    max_consecutive_auto_reply=10,
+    is_termination_msg=lambda x: "summary complete" in x.get("content", "").lower(),
 )
 
-# Agent A: Focuses on gathering specific information (e.g., market trends)
-agent_a = autogen.AssistantAgent(
-    name="MarketResearcher",
+researcher = autogen.AssistantAgent(
+    name="Researcher",
     llm_config={"config_list": config_list},
-    system_message="You are a market research expert. Your task is to analyze the current market trends for AI assistants and provide key findings.",
+    system_message=(
+        "You are a diligent and resourceful researcher. Your primary goal is to gather all necessary "
+        "information from the AI knowledge store to answer the user's questions comprehensively. "
+        "Use the 'ai_search_knowledge_store' tool to find relevant data. "
+        "If you don't find enough information with one query, try rephrasing or using related terms. "
+        "Once you believe you have all the required information, inform the Summarizer agent."
+    ),
 )
 
-# Agent B: Focuses on gathering different information (e.g., competitor analysis)
-agent_b = autogen.AssistantAgent(
-    name="CompetitorAnalyst",
+summarizer = autogen.AssistantAgent(
+    name="Summarizer",
     llm_config={"config_list": config_list},
-    system_message="You are a competitor analyst. Your task is to identify top competitors in the AI assistant space and summarize their key features.",
+    system_message=(
+        "You are an expert summarizer and report generator. Your task is to take all the information "
+        "provided by the Researcher and synthesize it into a clear, concise, and comprehensive report or summary. "
+        "Ensure the summary directly addresses the original query from the Admin. "
+        "Format the summary professionally using Markdown. "
+        "Conclude your summary with the phrase 'SUMMARY COMPLETE' to signal the end of the report."
+    ),
 )
 
-# Summarizer Agent: Combines inputs from other agents and generates a final summary
-summarizer_agent = autogen.AssistantAgent(
-    name="SummaryGenerator",
-    llm_config={"config_list": config_list},
-    system_message="You are a professional summarizer. Your task is to take the findings from the MarketResearcher and CompetitorAnalyst, synthesize them, and produce a concise, final report summarizing the overall landscape for AI assistants. Focus on actionable insights.",
+# --- 3. Register the search function ---
+autogen.register_function(
+    ai_search_knowledge_store,
+    caller=researcher,
+    executor=user_proxy,
+    name="ai_search_knowledge_store",
+    description="Tool to perform a search on the external AI knowledge store. Input is the search query string.",
 )
 
-# --- 3. Create a Group Chat (Optional but recommended for complex interactions) ---
-# This allows agents to communicate and collaborate more naturally.
+# --- 4. Create Group Chat ---
 groupchat = autogen.GroupChat(
-    agents=[user_proxy, agent_a, agent_b, summarizer_agent],
-    messages=[],
-    max_round=15,  # Limit the number of communication rounds
+    agents=[user_proxy, researcher, summarizer],
+    messages=[], # The messages list is initialized here
+    max_round=20,
+    speaker_selection_method="auto",
 )
 manager = autogen.GroupChatManager(groupchat=groupchat, llm_config={"config_list": config_list})
 
-# --- 4. Initiate the Conversation ---
-# The user_proxy starts the conversation with the manager of the group chat.
-user_proxy.initiate_chat(
-    manager,
-    message="I need a comprehensive summary of the current landscape for AI assistants. "
-            "MarketResearcher, please provide key market trends. "
-            "CompetitorAnalyst, please identify top competitors and their features. "
-            "Finally, SummaryGenerator, please synthesize these findings into a final report.",
+# --- 5. Initiate the Conversation ---
+initial_prompt = (
+    "Please provide a comprehensive summary report on the current market trends in AI assistants "
+    "and identify our top competitors in this space, including their key features. "
+    "Researcher, begin by searching the knowledge store for this information."
 )
 
-# --- 5. Retrieve the Final Summary ---
-# The final message in the conversation (from the summarizer agent) will be your summary.
-# You might need to inspect the chat history to pinpoint the exact message.
+print(f"\n--- Initiating Chat with Prompt: ---\n{initial_prompt}\n")
 
-# You can access the last message of the conversation through user_proxy.chat_messages
-# or by defining a termination condition for the summarizer.
+user_proxy.initiate_chat(
+    manager,
+    message=initial_prompt,
+)
 
-# A more robust way to get the final summary:
-# In a real-world scenario, you might have the summarizer agent explicitly
-# send its final output to the user_proxy with a specific keyword or a termination message.
-# For simplicity in this example, we'll assume the last message from the summarizer is the summary.
+# --- Retrieve all messages from the group chat ---
+print("\n--- Retrieving All Messages from Group Chat ---")
+all_messages = groupchat.messages
 
-print("\n--- Conversation History ---")
-for i, msg in enumerate(groupchat.messages):
-    print(f"Round {i+1} - From {msg['name']} ({msg['role']}):")
-    print(msg['content'])
-    print("-" * 30)
+if all_messages:
+    for i, message in enumerate(all_messages):
+        sender_name = message.get("name", "Unknown Sender")
+        message_content = message.get("content", "[No Content]")
+        message_role = message.get("role", "N/A") # Role can be 'user', 'assistant', 'tool'
 
-# To specifically extract the summary:
-# You'd typically design the summarizer to respond to the user_proxy,
-# or have a specific message ending.
-# For this example, let's assume the last message from the SummaryGenerator is the final summary.
+        print(f"--- Message {i+1} ---")
+        print(f"Sender: {sender_name} (Role: {message_role})")
+        print(f"Content:\n{message_content}")
+        print("-" * 40)
+else:
+    print("No messages found in the group chat history.")
 
-final_summary_message = None
+
+# --- 6. Retrieve the Final Summary Report (as before) ---
+print("\n--- Final Summary Report (extracted from last message) ---")
+final_summary = None
 for msg in reversed(groupchat.messages):
-    if msg['name'] == "SummaryGenerator":
-        final_summary_message = msg['content']
+    if msg.get("sender") == summarizer and "summary complete" in msg.get("content", "").lower():
+        final_summary = msg["content"].replace("SUMMARY COMPLETE", "").strip()
         break
 
-if final_summary_message:
-    print("\n--- Final Summary from SummaryGenerator ---")
-    print(final_summary_message)
+if final_summary:
+    print(final_summary)
 else:
-    print("\nCould not find a final summary from the SummaryGenerator.")
+    print("Could not find a clear final summary. Review the full chat log for details.")
+
+print("\n--- End of Conversation ---")
